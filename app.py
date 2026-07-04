@@ -4,12 +4,11 @@ from datetime import datetime, date
 import psycopg2
 from sqlalchemy import create_engine
 
-# Sayfa genişlik ayarları
-st.set_page_config(page_title="MESEM Süreç Takip Otomasyonu", layout="wide")
+st.set_page_config(page_title="MESEM Süreç Takip Otomasyonu (Hızlı Web)", layout="wide")
 
 st.markdown("""
     <style>
-    html, body, [data-testid="stWidgetLabel"], .stSelectbox, .stTextInput, .stTextArea, .stButton, .stNumberInput, p, span, label, .stRadio {
+    html, body, [data-testid="stWidgetLabel"], .stSelectbox, .stTextInput, .stTextArea, .stButton, p, span, label, .stRadio, .stNumberInput {
         font-size: 19px !important;
     }
     h1 { font-size: 36px !important; font-weight: bold !important; }
@@ -20,128 +19,79 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- BULUT VERİ TABANI BAĞLANTILARI ---
+# --- BULUT BAĞLANTISI VE ÖN BELLEK (CACHE) MİMARİSİ ---
 @st.cache_resource
 def get_engine():
-    return create_engine(st.secrets["DATABASE_URL"])
+    # Bağlantı kopmalarını önleyen havuz yapısı
+    return create_engine(st.secrets["DATABASE_URL"], pool_pre_ping=True, pool_size=10, max_overflow=20)
 
 def get_connection():
     return psycopg2.connect(st.secrets["DATABASE_URL"])
 
-def init_db():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS ayarlar (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            okul_adi TEXT,
-            alanlar TEXT,
-            senkronize_edildi INTEGER DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS ogrenciler (
-            ogrenci_id SERIAL PRIMARY KEY,
-            ad_soyad TEXT NOT NULL,
-            cinsiyet TEXT,
-            dogum_tarihi DATE,
-            gelis_sekli TEXT,
-            orgun_gecmisi TEXT,
-            alan_dal TEXT,
-            mesem_sinifi TEXT,
-            obp REAL,
-            ogrenci_telefon TEXT,
-            anne_telefon TEXT,
-            baba_telefon TEXT,
-            ogrenci_adresi TEXT,
-            ogretmen_notu TEXT,
-            mevcut_durum TEXT DEFAULT 'Beklemede',
-            senkronize_edildi INTEGER DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS isletmeler (
-            isletme_id SERIAL PRIMARY KEY,
-            isletme_adi TEXT NOT NULL,
-            yetkili_kisi TEXT,
-            yetkili_unvani TEXT,
-            isletme_telefon TEXT,
-            yetkili_telefon TEXT,
-            yetkili_mail TEXT,
-            mali_adres TEXT,
-            isletme_adresi TEXT,
-            servis_imkani INTEGER DEFAULT 0,
-            usta_ogretici_belgesi INTEGER DEFAULT 0,
-            ozel_talepler TEXT,
-            senkronize_edildi INTEGER DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS isletme_talepleri (
-            talep_id SERIAL PRIMARY KEY,
-            isletme_id INTEGER REFERENCES isletmeler(isletme_id) ON DELETE CASCADE,
-            talep_edilen_alan TEXT,
-            kontenjan INTEGER,
-            senkronize_edildi INTEGER DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS eslesmeler (
-            islem_id SERIAL PRIMARY KEY,
-            ogrenci_id INTEGER REFERENCES ogrenciler(ogrenci_id) ON DELETE CASCADE,
-            isletme_id INTEGER REFERENCES isletmeler(isletme_id) ON DELETE CASCADE,
-            surec_durumu TEXT,
-            islem_tarihi DATE,
-            senkronize_edildi INTEGER DEFAULT 0
-        );
-    """)
-    cursor.execute("SELECT COUNT(*) FROM ayarlar")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO ayarlar (id, okul_adi, alanlar) VALUES (1, 'TOKİ Yahya Kemal Çok Programlı Anadolu Lisesi', 'Muhasebe ve Finansman, Büro Yönetimi')")
-    conn.commit()
-    cursor.close()
-    conn.close()
+engine = get_engine()
 
-try:
-    init_db()
-except Exception as e:
-    st.error("Veri tabanı ile iletişim kurulamadı. Bu sayfa sadece arayüzdür. Lütfen bağlantı bilgilerinizi kontrol edin.")
+# SİHİRLİ DOKUNUŞ: Verileri her saniye buluttan çekmek yerine hafızaya alan fonksiyon
+@st.cache_data(show_spinner=False)
+def verileri_getir(sorgu):
+    return pd.read_sql_query(sorgu, engine)
 
 def yas_hesapla(dogum_tarihi):
     bugun = date.today()
     return bugun.year - dogum_tarihi.year - ((bugun.month, bugun.day) < (dogum_tarihi.month, dogum_tarihi.day))
 
-# --- HAFIZA HAVUZU (HATA BURADAYDI, DÜZELTİLDİ) ---
-# Metin alanları için boşluk ataması
-for k in ["o_ad_soyad", "o_tel", "o_anne", "o_baba", "o_adr", "o_not", "i_adi", "i_adr", "i_kisi", "i_tel", "i_unv", "i_mail", "i_not"]:
-    if k not in st.session_state: st.session_state[k] = ""
-
-# Sayısal alanlar için rakam ataması (Hata giderildi)
-if "o_obp" not in st.session_state: st.session_state.o_obp = 50.0
-if "i_muh" not in st.session_state: st.session_state.i_muh = 0
-if "i_bur" not in st.session_state: st.session_state.i_bur = 0
+# --- HAFIZA HAVUZU ---
 if "reset_sayaci" not in st.session_state: st.session_state.reset_sayaci = 0
+for k in ["frm_ad", "frm_tel", "frm_anne", "frm_baba", "frm_adr", "frm_not", "i_adi", "i_adr", "i_tel", "i_ykisi", "i_yunv", "i_ymail", "i_ytel", "i_not"]:
+    if k not in st.session_state: st.session_state[k] = ""
+for k in ["frm_obp", "i_muh", "i_bur"]:
+    if k not in st.session_state: st.session_state[k] = 0 if k != "frm_obp" else 50.0
 
-engine = get_engine()
+st.sidebar.title("🛠️ MESEM Bulut Merkezi")
+st.sidebar.success("⚡ Turbo Önbellek Aktif")
+st.sidebar.info("🌐 Şu anda 7/24 Senkronize Web (Bulut) sürümünü kullanıyorsunuz.")
 
-st.sidebar.title("🛠️ MESEM Yönetim Merkezi")
 menu = st.sidebar.radio("Lütfen bir bölüm seçin:", ("Genel Durum Paneli", "Öğrenci Bilgileri", "İşletme Bilgileri", "Eşleştirme ve Süreç Takibi"))
 
 if menu == "Genel Durum Paneli":
     st.header("📊 MESEM Genel Durum Paneli")
+    
+    # 3 ayrı sorgu yerine TEK sorgu ile hız artışı
+    sorgu_kpi = """
+        SELECT 
+            COUNT(*) as toplam,
+            COUNT(*) FILTER (WHERE mevcut_durum = 'Beklemede') as beklemede,
+            COUNT(*) FILTER (WHERE mevcut_durum = 'Sözleşme İmzalandı (Yerleşti)') as yerlesen
+        FROM ogrenciler
+    """
+    df_kpi = verileri_getir(sorgu_kpi)
+    
     kpi1, kpi2, kpi3 = st.columns(3)
-    with kpi1: st.metric("👥 Toplam Kayıtlı Aday", int(pd.read_sql_query("SELECT COUNT(*) FROM ogrenciler", engine).iloc[0, 0]))
-    with kpi2: st.metric("⏳ İşletme Arayan (Beklemede)", int(pd.read_sql_query("SELECT COUNT(*) FROM ogrenciler WHERE mevcut_durum = 'Beklemede'", engine).iloc[0, 0]))
-    with kpi3: st.metric("✅ İşe Yerleşen / Sözleşmeli", int(pd.read_sql_query("SELECT COUNT(*) FROM ogrenciler WHERE mevcut_durum = 'Sözleşme İmzalandı (Yerleşti)'", engine).iloc[0, 0]))
+    with kpi1: st.metric("👥 Toplam Kayıtlı Aday", int(df_kpi["toplam"].iloc[0]))
+    with kpi2: st.metric("⏳ İşletme Arayan", int(df_kpi["beklemede"].iloc[0]))
+    with kpi3: st.metric("✅ Yerleşen / Sözleşmeli", int(df_kpi["yerlesen"].iloc[0]))
     
     st.markdown("---")
     st.subheader("🔍 Alanlara Göre Eşleşme Bekleyen Arz / Talep Havuzu")
     col_rapor1, col_rapor2 = st.columns(2)
     alanlar = ["Muhasebe ve Finansman", "Büro Yönetimi"]
     
+    # Toplu verileri hafızadan çeker
+    df_arz_toplu = verileri_getir("SELECT alan_dal, COUNT(*) as sayi FROM ogrenciler WHERE mevcut_durum='Beklemede' GROUP BY alan_dal")
+    df_talep_toplu = verileri_getir("SELECT talep_edilen_alan, COALESCE(SUM(kontenjan), 0) as toplam FROM isletme_talepleri GROUP BY talep_edilen_alan")
+    
     with col_rapor1:
         st.markdown("### ⏳ İşletme Bekleyen Öğrenciler")
         for alan in alanlar:
-            sayi = pd.read_sql_query(f"SELECT COUNT(*) FROM ogrenciler WHERE alan_dal='{alan}' AND mevcut_durum='Beklemede'", engine).iloc[0, 0]
+            filtre = df_arz_toplu[df_arz_toplu['alan_dal'] == alan]
+            sayi = int(filtre['sayi'].iloc[0]) if not filtre.empty else 0
             st.info(f"**{alan}:** {sayi} Öğrenci atama bekliyor.")
             
     with col_rapor2:
         st.markdown("### 🏢 Öğrenci Arayan İşletmeler")
         for alan in alanlar:
-            talep = pd.read_sql_query(f"SELECT COALESCE(SUM(kontenjan), 0) FROM isletme_talepleri WHERE talep_edilen_alan='{alan}'", engine).iloc[0, 0]
-            st.success(f"**{alan}:** Toplam {int(talep)} açık kontenjan var.")
+            filtre = df_talep_toplu[df_talep_toplu['talep_edilen_alan'] == alan]
+            talep = int(filtre['toplam'].iloc[0]) if not filtre.empty else 0
+            st.success(f"**{alan}:** Toplam {talep} açık kontenjan var.")
 
     st.markdown("---")
     st.subheader("📁 Alan İstatistikleri (Güncel Atanan İşletme Detaylı)")
@@ -153,217 +103,220 @@ if menu == "Genel Durum Paneli":
                     COALESCE((SELECT i.isletme_adi FROM eslesmeler e JOIN isletmeler i ON e.isletme_id = i.isletme_id WHERE e.ogrenci_id = o.ogrenci_id ORDER BY e.islem_id DESC LIMIT 1), 'Atanmadı') AS "Yönlendirildiği İşletme"
                 FROM ogrenciler o WHERE o.alan_dal = '{alan}'
             '''
-            st.dataframe(pd.read_sql_query(sorgu_alan, engine), width='stretch', hide_index=True)
+            st.dataframe(verileri_getir(sorgu_alan), use_container_width=True, hide_index=True)
 
 elif menu == "Öğrenci Bilgileri":
     st.header("👨‍🎓 Öğrenci İşlemleri Merkezi")
     sekme_listele, sekme_ekle = st.tabs(["📋 Öğrenci Havuzu & Yönetimi", "➕ Yeni Öğrenci Ekle"])
     
     with sekme_ekle:
-        gelis_sekli = st.radio("Öğrencinin Geldiği Yer", ["Kendi Okulumuzdan (TOKİ Yahya Kemal MTAL)", "Başka Okuldan Geliyor"], key=f"o_gelis_{st.session_state.reset_sayaci}")
-        if "Kendi Okulumuzdan" in gelis_sekli:
-            st.text_area("Öğretmen Görüşleri / Kişilik Özellikleri", key="o_not", placeholder="Örn: El becerisi iyi...")
-        else:
-            st.session_state.o_not = ""
-
-        st.markdown("---")
-        st.text_input("Öğrencinin Adı ve Soyadı", key="o_ad_soyad")
-        col_c, col_o = st.columns(2)
-        with col_c: cinsiyet = st.selectbox("Cinsiyeti", ["Erkek", "Kız"], key="o_cinsiyet")
-        with col_o: st.number_input("Ortaöğretim Başarı Puanı (OBP)", min_value=0.0, max_value=100.0, step=0.1, key="o_obp")
+        gelis_sekli = st.radio("Öğrencinin Geldiği Yer", ["Kendi Okulumuzdan (TOKİ Yahya Kemal MTAL)", "Başka Okuldan Geliyor"], key=f"frm_gelis_{st.session_state.reset_sayaci}")
+        ogretmen_notu = st.text_area("Öğretmen Görüşleri / Özellikleri", key=f"frm_not_{st.session_state.reset_sayaci}") if "Kendi" in gelis_sekli else ""
         
-        col_tarih, col_yas = st.columns(2)
-        with col_tarih: dogum_tarihi = st.date_input("Doğum Tarihi", value=date(date.today().year - 15, 1, 1), min_value=date(1990, 1, 1), max_value=date.today(), format="DD/MM/YYYY", key="o_dogum")
-        yas = yas_hesapla(st.session_state.o_dogum)
-        with col_yas:
-            st.markdown(f"<br>**Yaş:** {yas}", unsafe_allow_html=True)
-            if yas < 14: st.error("⚠️ 14 yaşından küçük!")
-            else: st.success("✅ Yaş uygun.")
-
         st.markdown("---")
-        col_org, col_mes = st.columns(2)
-        with col_org: st.selectbox("Örgün Son Durumu", ["9. Sınıf - Sınıf Tekrarına Kaldı", "9. Sınıf - Başarılı (10'a Geçti)", "10. Sınıf - Sınıf Tekrarına Kaldı", "10. Sınıf - Başarılı (11'e Geçti)", "11. Sınıf (Terk / Geçiş)", "12. Sınıf (Terk / Geçiş)"], key="o_orgun")
-        with col_mes: st.selectbox("MESEM Sınıfı", ["9. Sınıf", "10. Sınıf", "11. Sınıf", "12. Sınıf"], index=1, key="o_sinif")
-        st.selectbox("Yönlendirileceği Alan", ["Muhasebe ve Finansman", "Büro Yönetimi"], key="o_alan")
+        ad_soyad = st.text_input("Öğrencinin Adı ve Soyadı", key=f"frm_ad_{st.session_state.reset_sayaci}")
+        col_c, col_o = st.columns(2)
+        with col_c: cinsiyet = st.selectbox("Cinsiyeti", ["Erkek", "Kız"], key=f"frm_cin_{st.session_state.reset_sayaci}")
+        with col_o: obp = st.number_input("OBP Puanı", min_value=0.0, max_value=100.0, step=0.1, key=f"frm_obp_{st.session_state.reset_sayaci}")
+        
+        dogum_tarihi = st.date_input("Doğum Tarihi", value=date(date.today().year - 15, 1, 1), format="DD/MM/YYYY", key=f"frm_dt_{st.session_state.reset_sayaci}")
+        yas = yas_hesapla(dogum_tarihi)
+        if yas < 14: st.error("⚠️ Öğrenci 14 yaşından küçük!")
+        
+        orgun_gecmisi = st.selectbox("Örgün Durumu", ["9. Sınıf - Sınıf Tekrarına Kaldı", "9. Sınıf - Başarılı (10'a Geçti)", "10. Sınıf - Sınıf Tekrarına Kaldı", "10. Sınıf - Başarılı (11'e Geçti)", "11. Sınıf (Terk)", "12. Sınıf (Terk)"], key=f"frm_orgun_{st.session_state.reset_sayaci}")
+        mesem_sinifi = st.selectbox("MESEM Sınıfı", ["9. Sınıf", "10. Sınıf", "11. Sınıf", "12. Sınıf"], index=1, key=f"frm_sinif_{st.session_state.reset_sayaci}")
+        alan_dal = st.selectbox("Yönlendirileceği Alan", ["Muhasebe ve Finansman", "Büro Yönetimi"], key=f"frm_alan_{st.session_state.reset_sayaci}")
         
         col_t1, col_t2, col_t3 = st.columns(3)
-        with col_t1: st.text_input("Öğrenci Telefon No", key="o_tel")
-        with col_t2: st.text_input("Anne Telefon No", key="o_anne")
-        with col_t3: st.text_input("Baba Telefon No", key="o_baba")
-        st.text_area("İkamet Adresi", key="o_adr")
+        with col_t1: ogrenci_telefon = st.text_input("Öğrenci Tel", key=f"frm_tel_{st.session_state.reset_sayaci}")
+        with col_t2: anne_telefon = st.text_input("Anne Tel", key=f"frm_anne_{st.session_state.reset_sayaci}")
+        with col_t3: baba_telefon = st.text_input("Baba Tel", key=f"frm_baba_{st.session_state.reset_sayaci}")
+        ogrenci_adresi = st.text_area("Öğrenci Adresi", key=f"frm_adr_{st.session_state.reset_sayaci}")
         
         if st.button("💾 Öğrenciyi Havuza Ekle"):
-            if yas < 14: st.error("Hata: Yaş sınırı!")
-            elif not st.session_state.o_ad_soyad: st.warning("Lütfen öğrenci adı giriniz.")
-            else:
+            if yas >= 14 and ad_soyad:
                 conn = get_connection(); cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO ogrenciler (ad_soyad, cinsiyet, dogum_tarihi, gelis_sekli, orgun_gecmisi, alan_dal, mesem_sinifi, obp, ogrenci_telefon, anne_telefon, baba_telefon, ogrenci_adresi, ogretmen_notu) 
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ''', (st.session_state.o_ad_soyad, st.session_state.o_cinsiyet, st.session_state.o_dogum.strftime("%Y-%m-%d"), "Kendi Okulu" if "Kendi Okulumuzdan" in gelis_sekli else "Başka Okul", st.session_state.o_orgun, st.session_state.o_alan, st.session_state.o_sinif, st.session_state.o_obp, st.session_state.o_tel, st.session_state.o_anne, st.session_state.o_baba, st.session_state.o_adr, st.session_state.o_not))
+                cursor.execute('''INSERT INTO ogrenciler (ad_soyad, cinsiyet, dogum_tarihi, gelis_sekli, orgun_gecmisi, alan_dal, mesem_sinifi, obp, ogrenci_telefon, anne_telefon, baba_telefon, ogrenci_adresi, ogretmen_notu, senkronize_edildi) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1)''', (ad_soyad, cinsiyet, dogum_tarihi.strftime("%Y-%m-%d"), gelis_sekli, orgun_gecmisi, alan_dal, mesem_sinifi, obp, ogrenci_telefon, anne_telefon, baba_telefon, ogrenci_adresi, ogretmen_notu))
                 conn.commit(); cursor.close(); conn.close()
-                st.success(f"🎉 {st.session_state.o_ad_soyad} başarıyla eklendi!")
-                
-                st.session_state.o_ad_soyad = ""; st.session_state.o_tel = ""; st.session_state.o_anne = ""; st.session_state.o_baba = ""; st.session_state.o_adr = ""; st.session_state.o_not = ""
-                st.session_state.o_obp = 50.0
+                verileri_getir.clear() # CACHE TEMİZLİĞİ: Yeni veri eklendiğinde hafızayı sıfırlar
+                st.success(f"🎉 {ad_soyad} başarıyla buluta eklendi!")
                 st.session_state.reset_sayaci += 1
                 st.rerun()
 
     with sekme_listele:
-        st.dataframe(pd.read_sql_query('SELECT ogrenci_id AS "ID", ad_soyad AS "Ad Soyad", obp AS "OBP", alan_dal AS "Alan", mevcut_durum AS "Durum" FROM ogrenciler', engine), width='stretch', hide_index=True)
+        st.dataframe(verileri_getir('SELECT ogrenci_id AS "ID", ad_soyad AS "Ad Soyad", obp AS "OBP", alan_dal AS "Alan", mevcut_durum AS "Durum" FROM ogrenciler ORDER BY ogrenci_id DESC'), use_container_width=True, hide_index=True)
         st.markdown("---")
-        
-        df_o_list = pd.read_sql_query("SELECT ogrenci_id, ad_soyad FROM ogrenciler", engine)
-        secenekler = ["Lütfen Seçiniz..."] + df_o_list['ad_soyad'].tolist()
-        o_secim = st.selectbox("İncelemek, Güncellemek veya Silmek İstediğiniz Öğrenci:", secenekler, key=f"guncelle_o_secim_{st.session_state.reset_sayaci}")
-        
-        if o_secim != "Lütfen Seçiniz...":
-            o_id = df_o_list.loc[df_o_list['ad_soyad'] == o_secim, 'ogrenci_id'].values[0]
-            o_veri = pd.read_sql_query(f"SELECT * FROM ogrenciler WHERE ogrenci_id = {o_id}", engine).iloc[0]
-            
-            with st.form("o_duz_form"):
-                y_ad = st.text_input("Adı Soyadı", o_veri['ad_soyad'])
-                y_obp = st.number_input("OBP", value=float(o_veri['obp']) if pd.notnull(o_veri['obp']) else 50.0)
-                
-                col_i1, col_i2, col_i3 = st.columns(3)
-                with col_i1: y_tel = st.text_input("Öğrenci Tel", o_veri['ogrenci_telefon'] or "")
-                with col_i2: y_anne = st.text_input("Anne Tel", o_veri['anne_telefon'] or "")
-                with col_i3: y_baba = st.text_input("Baba Tel", o_veri['baba_telefon'] or "")
-                
-                y_durum = st.selectbox("Durumu", ["Beklemede", "Görüşmeye Gönderildi", "Sözleşme İmzalandı (Yerleşti)"], index=["Beklemede", "Görüşmeye Gönderildi", "Sözleşme İmzalandı (Yerleşti)"].index(o_veri['mevcut_durum']))
-                
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.form_submit_button("📝 Güncelle"):
-                        conn = get_connection(); cursor = conn.cursor()
-                        cursor.execute("UPDATE ogrenciler SET ad_soyad=%s, obp=%s, ogrenci_telefon=%s, anne_telefon=%s, baba_telefon=%s, mevcut_durum=%s WHERE ogrenci_id=%s", (y_ad, y_obp, y_tel, y_anne, y_baba, y_durum, int(o_id)))
-                        conn.commit(); cursor.close(); conn.close()
-                        st.session_state.reset_sayaci += 1
-                        st.success("Güncellendi!"); st.rerun()
-                with c2:
-                    if st.form_submit_button("❌ SİSTEMDEN SİL"):
-                        conn = get_connection(); cursor = conn.cursor()
-                        cursor.execute("DELETE FROM ogrenciler WHERE ogrenci_id=%s", (int(o_id),))
-                        conn.commit(); cursor.close(); conn.close()
-                        st.session_state.reset_sayaci += 1
-                        st.warning("Silindi!"); st.rerun()
+        df_o_list = verileri_getir("SELECT ogrenci_id, ad_soyad FROM ogrenciler ORDER BY ad_soyad ASC")
+        if not df_o_list.empty:
+            secenekler = ["Lütfen Seçiniz..."] + df_o_list['ad_soyad'].tolist()
+            o_secim = st.selectbox("İncelemek, Güncellemek veya Silmek İstediğiniz Öğrenci:", secenekler, key=f"guncelle_o_secim_{st.session_state.reset_sayaci}")
+            if o_secim != "Lütfen Seçiniz...":
+                o_id = df_o_list.loc[df_o_list['ad_soyad'] == o_secim, 'ogrenci_id'].values[0]
+                o_veri = verileri_getir(f"SELECT * FROM ogrenciler WHERE ogrenci_id = {o_id}").iloc[0]
+                with st.form("o_duz_form"):
+                    y_ad = st.text_input("Adı Soyadı", o_veri['ad_soyad'])
+                    y_obp = st.number_input("OBP", value=float(o_veri['obp']) if pd.notnull(o_veri['obp']) else 50.0)
+                    col_i1, col_i2, col_i3 = st.columns(3)
+                    with col_i1: y_tel = st.text_input("Öğrenci Tel", o_veri['ogrenci_telefon'] or "")
+                    with col_i2: y_anne = st.text_input("Anne Tel", o_veri['anne_telefon'] or "")
+                    with col_i3: y_baba = st.text_input("Baba Tel", o_veri['baba_telefon'] or "")
+                    y_durum = st.selectbox("Durumu", ["Beklemede", "Görüşmeye Gönderildi", "Sözleşme İmzalandı (Yerleşti)"], index=["Beklemede", "Görüşmeye Gönderildi", "Sözleşme İmzalandı (Yerleşti)"].index(o_veri['mevcut_durum']))
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.form_submit_button("📝 Güncelle"):
+                            conn = get_connection(); cursor = conn.cursor()
+                            cursor.execute("UPDATE ogrenciler SET ad_soyad=%s, obp=%s, ogrenci_telefon=%s, anne_telefon=%s, baba_telefon=%s, mevcut_durum=%s WHERE ogrenci_id=%s", (y_ad, y_obp, y_tel, y_anne, y_baba, y_durum, int(o_id)))
+                            conn.commit(); cursor.close(); conn.close()
+                            verileri_getir.clear()
+                            st.session_state.reset_sayaci += 1
+                            st.success("Güncellendi!"); st.rerun()
+                    with c2:
+                        if st.form_submit_button("❌ SİSTEMDEN SİL"):
+                            conn = get_connection(); cursor = conn.cursor()
+                            cursor.execute("DELETE FROM ogrenciler WHERE ogrenci_id=%s", (int(o_id),))
+                            conn.commit(); cursor.close(); conn.close()
+                            verileri_getir.clear()
+                            st.session_state.reset_sayaci += 1
+                            st.warning("Silindi!"); st.rerun()
 
 elif menu == "İşletme Bilgileri":
     st.header("🏢 İşletme İşlemleri Merkezi")
     sekme_i_listele, sekme_i_ekle = st.tabs(["📋 İşletme Havuzu & Yönetimi", "🏢 Yeni İşletme Ekle"])
     
     with sekme_i_listele:
-        st.dataframe(pd.read_sql_query('SELECT isletme_id AS "ID", isletme_adi AS "İşletme Adı", yetkili_kisi AS "Yetkili", yetkili_telefon AS "Yetkili Tel", isletme_adresi AS "Adres" FROM isletmeler', engine), width='stretch', hide_index=True)
+        st.dataframe(verileri_getir('SELECT isletme_id AS "ID", isletme_adi AS "İşletme Adı", yetkili_kisi AS "Yetkili", yetkili_telefon AS "Yetkili Tel", isletme_adresi AS "Adres" FROM isletmeler ORDER BY isletme_id DESC'), use_container_width=True, hide_index=True)
         st.markdown("---")
-        
-        df_i_list = pd.read_sql_query("SELECT isletme_id, isletme_adi FROM isletmeler", engine)
-        secenekler_i = ["Lütfen Seçiniz..."] + df_i_list['isletme_adi'].tolist()
-        i_secim = st.selectbox("İncelemek, Güncellemek veya Silmek İstediğiniz İşletme:", secenekler_i, key=f"guncelle_i_secim_{st.session_state.reset_sayaci}")
-        
-        if i_secim != "Lütfen Seçiniz...":
-            i_id = df_i_list.loc[df_i_list['isletme_adi'] == i_secim, 'isletme_id'].values[0]
-            i_veri = pd.read_sql_query(f"SELECT * FROM isletmeler WHERE isletme_id = {i_id}", engine).iloc[0]
-            
-            with st.form("i_duzenleme_formu"):
-                y_i_ad = st.text_input("İşletme Adı", i_veri['isletme_adi'])
-                y_i_adr = st.text_area("İşletme Çalışma Adresi", i_veri['isletme_adresi'] or "")
-                
-                c_y1, c_y2 = st.columns(2)
-                with c_y1:
-                    y_i_kisi = st.text_input("Yetkili Adı Soyadı", i_veri['yetkili_kisi'] or "")
-                    y_i_tel = st.text_input("Yetkili Telefonu", i_veri['yetkili_telefon'] or "")
-                with c_y2:
-                    y_i_unv = st.text_input("Yetkili Görevi", i_veri['yetkili_unvani'] or "")
-                    y_i_mail = st.text_input("Yetkili Mail", i_veri['yetkili_mail'] or "")
-                
-                y_i_not = st.text_area("Özel Talepler", i_veri['ozel_talepler'] or "")
-                
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.form_submit_button("📝 Güncelle"):
-                        conn = get_connection(); cursor = conn.cursor()
-                        cursor.execute("UPDATE isletmeler SET isletme_adi=%s, isletme_adresi=%s, yetkili_kisi=%s, yetkili_unvani=%s, yetkili_telefon=%s, yetkili_mail=%s, ozel_talepler=%s WHERE isletme_id=%s", (y_i_ad, y_i_adr, y_i_kisi, y_i_unv, y_i_tel, y_i_mail, y_i_not, int(i_id)))
-                        conn.commit(); cursor.close(); conn.close()
-                        st.session_state.reset_sayaci += 1
-                        st.success("Güncellendi!"); st.rerun()
-                with c2:
-                    if st.form_submit_button("❌ SİSTEMDEN SİL"):
-                        conn = get_connection(); cursor = conn.cursor()
-                        cursor.execute("DELETE FROM isletmeler WHERE isletme_id=%s", (int(i_id),))
-                        conn.commit(); cursor.close(); conn.close()
-                        st.session_state.reset_sayaci += 1
-                        st.warning("Silindi!"); st.rerun()
+        df_i_list = verileri_getir("SELECT isletme_id, isletme_adi FROM isletmeler ORDER BY isletme_adi ASC")
+        if not df_i_list.empty:
+            secenekler_i = ["Lütfen Seçiniz..."] + df_i_list['isletme_adi'].tolist()
+            i_secim = st.selectbox("İncelemek, Güncellemek veya Silmek İstediğiniz İşletme:", secenekler_i, key=f"guncelle_i_secim_{st.session_state.reset_sayaci}")
+            if i_secim != "Lütfen Seçiniz...":
+                i_id = df_i_list.loc[df_i_list['isletme_adi'] == i_secim, 'isletme_id'].values[0]
+                i_veri = verileri_getir(f"SELECT * FROM isletmeler WHERE isletme_id = {i_id}").iloc[0]
+                with st.form("i_duzenleme_formu"):
+                    y_i_ad = st.text_input("İşletme Adı", i_veri['isletme_adi'])
+                    y_i_adr = st.text_area("İşletme Çalışma Adresi", i_veri['isletme_adresi'] or "")
+                    c_y1, c_y2 = st.columns(2)
+                    with c_y1:
+                        y_i_kisi = st.text_input("Yetkili Adı Soyadı", i_veri['yetkili_kisi'] or "")
+                        y_i_tel = st.text_input("Yetkili Telefonu", i_veri['yetkili_telefon'] or "")
+                    with c_y2:
+                        y_i_unv = st.text_input("Yetkili Görevi", i_veri['yetkili_unvani'] or "")
+                        y_i_mail = st.text_input("Yetkili Mail", i_veri['yetkili_mail'] or "")
+                    y_i_not = st.text_area("Özel Talepler", i_veri['ozel_talepler'] or "")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.form_submit_button("📝 Güncelle"):
+                            conn = get_connection(); cursor = conn.cursor()
+                            cursor.execute("UPDATE isletmeler SET isletme_adi=%s, isletme_adresi=%s, yetkili_kisi=%s, yetkili_unvani=%s, yetkili_telefon=%s, yetkili_mail=%s, ozel_talepler=%s WHERE isletme_id=%s", (y_i_ad, y_i_adr, y_i_kisi, y_i_unv, y_i_tel, y_i_mail, y_i_not, int(i_id)))
+                            conn.commit(); cursor.close(); conn.close()
+                            verileri_getir.clear()
+                            st.session_state.reset_sayaci += 1
+                            st.success("İşletme güncellendi!"); st.rerun()
+                    with c2:
+                        if st.form_submit_button("❌ SİSTEMDEN SİL"):
+                            conn = get_connection(); cursor = conn.cursor()
+                            cursor.execute("DELETE FROM isletmeler WHERE isletme_id=%s", (int(i_id),))
+                            conn.commit(); cursor.close(); conn.close()
+                            verileri_getir.clear()
+                            st.session_state.reset_sayaci += 1
+                            st.warning("İşletme silindi!"); st.rerun()
 
     with sekme_i_ekle:
-        st.subheader("İşletme Genel Bilgileri")
-        st.text_input("İşletme Adı", key="i_adi")
-        st.text_area("İşletme Çalışma Adresi", key="i_adr")
-        
-        st.subheader("İletişim ve Yetkili Bilgileri")
-        c_y1, c_y2 = st.columns(2)
-        with c_y1:
-            st.text_input("Yetkili Kişi Adı Soyadı", key="i_kisi")
-            st.text_input("Yetkili Telefon Numarası", key="i_tel")
-        with c_y2:
-            st.text_input("Yetkilinin Görevi / Unvanı", key="i_unv")
-            st.text_input("Yetkili Mail Adresi", key="i_mail")
-        
-        st.text_area("Özel İstekler", key="i_not")
-        
-        st.markdown("### 📊 Bölüm Bazlı Kontenjan Talebi")
+        isletme_adi = st.text_input("İşletme Adı", key=f"i_adi_{st.session_state.reset_sayaci}")
+        isletme_adresi = st.text_area("İşletme Çalışma Adresi", key=f"i_adr_{st.session_state.reset_sayaci}")
+        isletme_telefon = st.text_input("İşletme Sabit Tel", key=f"i_tel_{st.session_state.reset_sayaci}")
+        st.markdown("### Yetkili Bilgileri")
+        c1, c2 = st.columns(2)
+        with c1:
+            yetkili_kisi = st.text_input("Yetkili Adı Soyadı", key=f"i_ykisi_{st.session_state.reset_sayaci}")
+            yetkili_telefon = st.text_input("Yetkili Cep No", key=f"i_ytel_{st.session_state.reset_sayaci}")
+        with c2:
+            yetkili_unvani = st.text_input("Yetkili Görevi", key=f"i_yunv_{st.session_state.reset_sayaci}")
+            yetkili_mail = st.text_input("Yetkili Mail", key=f"i_ymail_{st.session_state.reset_sayaci}")
+        ozel_talepler = st.text_area("İşletmenin Özel İstekleri", key=f"i_not_{st.session_state.reset_sayaci}")
         col_m, col_b = st.columns(2)
-        with col_m: st.number_input("Muhasebe Kontenjanı", min_value=0, step=1, key="i_muh")
-        with col_b: st.number_input("Büro Yönetimi Kontenjanı", min_value=0, step=1, key="i_bur")
+        with col_m: k_muh = st.number_input("Muhasebe Kontenjanı", min_value=0, key=f"i_muh_{st.session_state.reset_sayaci}")
+        with col_b: k_bur = st.number_input("Büro Kontenjanı", min_value=0, key=f"i_bur_{st.session_state.reset_sayaci}")
         
-        if st.button("🏢 İşletmeyi Havuza Ekle"):
-            if not st.session_state.i_adi: 
-                st.warning("İşletme adı giriniz.")
-            else:
+        if st.button("🏢 İşletmeyi Ekle"):
+            if isletme_adi:
                 conn = get_connection(); cursor = conn.cursor()
-                cursor.execute("INSERT INTO isletmeler (isletme_adi, isletme_adresi, yetkili_kisi, yetkili_unvani, yetkili_telefon, yetkili_mail, ozel_talepler) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING isletme_id", (st.session_state.i_adi, st.session_state.i_adr, st.session_state.i_kisi, st.session_state.i_unv, st.session_state.i_tel, st.session_state.i_mail, st.session_state.i_not))
+                cursor.execute("INSERT INTO isletmeler (isletme_adi, yetkili_kisi, yetkili_unvani, isletme_telefon, yetkili_telefon, yetkili_mail, isletme_adresi, ozel_talepler, senkronize_edildi) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1) RETURNING isletme_id", (isletme_adi, yetkili_kisi, yetkili_unvani, isletme_telefon, yetkili_telefon, yetkili_mail, isletme_adresi, ozel_talepler))
                 isletme_id = cursor.fetchone()[0]
-                if st.session_state.i_muh > 0: cursor.execute("INSERT INTO isletme_talepleri (isletme_id, talep_edilen_alan, kontenjan) VALUES (%s, 'Muhasebe ve Finansman', %s)", (isletme_id, st.session_state.i_muh))
-                if st.session_state.i_bur > 0: cursor.execute("INSERT INTO isletme_talepleri (isletme_id, talep_edilen_alan, kontenjan) VALUES (%s, 'Büro Yönetimi', %s)", (isletme_id, st.session_state.i_bur))
+                if k_muh > 0: cursor.execute("INSERT INTO isletme_talepleri (isletme_id, talep_edilen_alan, kontenjan, senkronize_edildi) VALUES (%s, 'Muhasebe ve Finansman', %s, 1)", (isletme_id, k_muh))
+                if k_bur > 0: cursor.execute("INSERT INTO isletme_talepleri (isletme_id, talep_edilen_alan, kontenjan, senkronize_edildi) VALUES (%s, 'Büro Yönetimi', %s, 1)", (isletme_id, k_bur))
                 conn.commit(); cursor.close(); conn.close()
-                st.success("🏢 İşletme başarıyla eklendi!")
-                
-                for k in ["i_adi", "i_adr", "i_kisi", "i_tel", "i_unv", "i_mail", "i_not"]: st.session_state[k] = ""
-                st.session_state.i_muh = 0; st.session_state.i_bur = 0
+                verileri_getir.clear()
+                st.success("İşletme buluta kaydedildi!")
                 st.session_state.reset_sayaci += 1
                 st.rerun()
 
 elif menu == "Eşleştirme ve Süreç Takibi":
     st.header("🤝 Akıllı Süreç Yönetimi")
-    df_ogrenciler = pd.read_sql_query("SELECT ogrenci_id, ad_soyad, alan_dal FROM ogrenciler WHERE mevcut_durum = 'Beklemede'", engine)
+    df_ogrenciler = verileri_getir("SELECT ogrenci_id, ad_soyad, alan_dal FROM ogrenciler WHERE mevcut_durum = 'Beklemede'")
     
     if df_ogrenciler.empty:
-        st.info("Bekleyen aday bulunmamaktadır.")
+        st.info("Bekleyen aday öğrenci yok.")
     else:
-        ogrenci_secimi = st.selectbox("Öğrenci Seçin", df_ogrenciler['ad_soyad'].tolist())
+        ogrenci_secimi = st.selectbox("Öğrenciyi Seçin", df_ogrenciler['ad_soyad'].tolist())
         secili_id = df_ogrenciler.loc[df_ogrenciler['ad_soyad'] == ogrenci_secimi, 'ogrenci_id'].values[0]
         secili_alan = df_ogrenciler.loc[df_ogrenciler['ad_soyad'] == ogrenci_secimi, 'alan_dal'].values[0]
         
-        sorgu_akilli = f"SELECT DISTINCT i.isletme_id, i.isletme_adi FROM isletmeler i JOIN isletme_talepleri t ON i.isletme_id = t.isletme_id WHERE t.talep_edilen_alan = '{secili_alan}' AND t.kontenjan > 0"
-        df_isletmeler = pd.read_sql_query(sorgu_akilli, engine)
+        sorgu_akilli = f"SELECT i.isletme_id, i.isletme_adi FROM isletmeler i JOIN isletme_talepleri t ON i.isletme_id = t.isletme_id WHERE t.talep_edilen_alan = '{secili_alan}' AND t.kontenjan > 0"
+        df_isletmeler = verileri_getir(sorgu_akilli)
         
-        if df_isletmeler.empty: st.error(f"🚨 {secili_alan} alanında boş işletme yok!")
+        if df_isletmeler.empty: st.error(f"🚨 {secili_alan} için açık kontenjanı olan işletme yok!")
         else:
-            with st.form("eslestirme_formu", clear_on_submit=True):
+            with st.form("eslestirme_formu"):
                 isletme_secimi = st.selectbox("Uygun İşletmeler", df_isletmeler['isletme_adi'].tolist())
-                surec_durumu = st.selectbox("Durum", ["Görüşmeye Gönderildi", "Reddedildi", "Sözleşme İmzalandı (Yerleşti)"])
-                islem_tarihi = st.date_input("Tarih", format="DD/MM/YYYY")
+                surec_durumu = st.selectbox("Süreç Durumu", ["Görüşmeye Gönderildi", "Reddedildi", "Sözleşme İmzalandı (Yerleşti)"])
+                islem_tarihi = st.date_input("İşlem Tarihi", format="DD/MM/YYYY")
                 
                 if st.form_submit_button("🔄 Kaydet"):
                     secilen_i_id = df_isletmeler.loc[df_isletmeler['isletme_adi'] == isletme_secimi, 'isletme_id'].values[0]
                     conn = get_connection(); cursor = conn.cursor()
-                    cursor.execute("INSERT INTO eslesmeler (ogrenci_id, isletme_id, surec_durumu, islem_tarihi) VALUES (%s, %s, %s, %s)", (int(secili_id), int(secilen_i_id), surec_durumu, islem_tarihi))
+                    cursor.execute("INSERT INTO eslesmeler (ogrenci_id, isletme_id, surec_durumu, islem_tarihi, senkronize_edildi) VALUES (%s, %s, %s, %s, 1)", (int(secili_id), int(secilen_i_id), surec_durumu, islem_tarihi))
                     if surec_durumu == "Sözleşme İmzalandı (Yerleşti)":
                         cursor.execute("UPDATE isletme_talepleri SET kontenjan = kontenjan - 1 WHERE isletme_id = %s AND talep_edilen_alan = %s", (int(secilen_i_id), secili_alan))
-                    y_durum = "Beklemede" if "Reddedildi" in surec_durumu else surec_durumu
-                    cursor.execute("UPDATE ogrenciler SET mevcut_durum = %s WHERE ogrenci_id = %s", (y_durum, int(secili_id)))
+                    yeni_statu = "Beklemede" if "Reddedildi" in surec_durumu else surec_durumu
+                    cursor.execute("UPDATE ogrenciler SET mevcut_durum = %s, senkronize_edildi = 1 WHERE ogrenci_id = %s", (yeni_statu, int(secili_id)))
                     conn.commit(); cursor.close(); conn.close()
-                    st.success("✅ Kaydedildi!"); st.rerun()
+                    verileri_getir.clear()
+                    st.success("Süreç bulut veri tabanına kaydedildi!"); st.rerun()
 
     st.markdown("---")
-    sorgu_liste = 'SELECT e.islem_id AS "İşlem No", o.ad_soyad AS "Öğrenci", i.isletme_adi AS "İşletme", e.surec_durumu AS "Durum" FROM eslesmeler e JOIN ogrenciler o ON e.ogrenci_id = o.ogrenci_id JOIN isletmeler i ON e.isletme_id = i.isletme_id ORDER BY e.islem_id DESC'
-    st.dataframe(pd.read_sql_query(sorgu_liste, engine), width='stretch', hide_index=True)
+    st.subheader("📋 Geçmiş Eşleşmeler ve Süreç Güncelleme")
+    df_eslesmeler = verileri_getir("SELECT e.islem_id, o.ad_soyad AS ogrenci, i.isletme_adi AS isletme, e.surec_durumu, e.ogrenci_id FROM eslesmeler e JOIN ogrenciler o ON e.ogrenci_id = o.ogrenci_id JOIN isletmeler i ON e.isletme_id = i.isletme_id ORDER BY e.islem_id DESC")
+    
+    if not df_eslesmeler.empty:
+        st.dataframe(df_eslesmeler[['islem_id', 'ogrenci', 'isletme', 'surec_durumu']].rename(columns={'islem_id': 'No', 'ogrenci': 'Öğrenci', 'isletme': 'İşletme', 'surec_durumu': 'Durum'}), use_container_width=True, hide_index=True)
+        st.markdown("---")
+        secenekler_e = ["Lütfen Seçiniz..."] + [f"{row['islem_id']} - {row['ogrenci']} ({row['isletme']})" for _, row in df_eslesmeler.iterrows()]
+        e_secim = st.selectbox("İncelemek, Güncellemek veya Silmek İstediğiniz Kayıt:", secenekler_e, key=f"guncelle_e_secim_{st.session_state.reset_sayaci}")
+        
+        if e_secim != "Lütfen Seçiniz...":
+            e_id = int(e_secim.split(" - ")[0])
+            e_veri = df_eslesmeler[df_eslesmeler['islem_id'] == e_id].iloc[0]
+            with st.form("e_duzenleme_formu"):
+                y_e_durum = st.selectbox("Süreç Durumu", ["Görüşmeye Gönderildi", "Reddedildi", "Sözleşme İmzalandı (Yerleşti)"], index=["Görüşmeye Gönderildi", "Reddedildi", "Sözleşme İmzalandı (Yerleşti)"].index(e_veri['surec_durumu']))
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.form_submit_button("📝 Güncelle"):
+                        conn = get_connection(); cursor = conn.cursor()
+                        cursor.execute("UPDATE eslesmeler SET surec_durumu=%s WHERE islem_id=%s", (y_e_durum, int(e_id)))
+                        y_statu = "Beklemede" if "Reddedildi" in y_e_durum else y_e_durum
+                        cursor.execute("UPDATE ogrenciler SET mevcut_durum=%s WHERE ogrenci_id=%s", (y_statu, int(e_veri['ogrenci_id'])))
+                        conn.commit(); cursor.close(); conn.close()
+                        verileri_getir.clear()
+                        st.session_state.reset_sayaci += 1
+                        st.success("Eşleşme durumu güncellendi!"); st.rerun()
+                with c2:
+                    if st.form_submit_button("❌ SİSTEMDEN SİL"):
+                        conn = get_connection(); cursor = conn.cursor()
+                        cursor.execute("DELETE FROM eslesmeler WHERE islem_id=%s", (int(e_id),))
+                        cursor.execute("UPDATE ogrenciler SET mevcut_durum='Beklemede' WHERE ogrenci_id=%s", (int(e_veri['ogrenci_id']),))
+                        conn.commit(); cursor.close(); conn.close()
+                        verileri_getir.clear()
+                        st.session_state.reset_sayaci += 1
+                        st.warning("Eşleşme kaydı silindi!"); st.rerun()
