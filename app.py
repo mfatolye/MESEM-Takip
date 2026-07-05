@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit st
 import pandas as pd
 from datetime import datetime, date
 import psycopg2
@@ -19,7 +19,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- BULUT BAĞLANTISI VE ÖN BELLEK (CACHE) MİMARİSİ ---
+# --- BULUT BAĞLANTISI VE 10 SN ZAMAN AŞIMLI ÖN BELLEK (CACHE) MİMARİSİ ---
 @st.cache_resource
 def get_engine():
     return create_engine(st.secrets["DATABASE_URL"], pool_pre_ping=True, pool_size=10, max_overflow=20)
@@ -29,7 +29,8 @@ def get_connection():
 
 engine = get_engine()
 
-@st.cache_data(show_spinner=False)
+# SİHİRLİ DOKUNUŞ: Masaüstü güncellemelerini algılaması için cache'e 10 saniye ömür (ttl) biçildi.
+@st.cache_data(ttl=10, show_spinner=False)
 def verileri_getir(sorgu):
     return pd.read_sql_query(sorgu, engine)
 
@@ -102,7 +103,7 @@ if menu == "Genel Durum Paneli":
 elif menu == "Öğrenci Bilgileri":
     st.header("👨‍🎓 Öğrenci İşlemleri Merkezi")
     conn = get_connection()
-    sekme_listele, sekme_ekle = st.tabs(["📋 Öğrenci Havuzu & Yönetimi", "➕ Yeni Öğrenci Ekle"])
+    sekme_listele, sekme_ekle = st.tabs(["📋 Öğrenci Havuzu & Yönetimi", "🏢 Yeni Öğrenci Ekle"])
     
     with sekme_ekle:
         gelis_sekli = st.radio("Öğrencinin Geldiği Yer", ["Kendi Okulumuzdan (TOKİ Yahya Kemal MTAL)", "Başka Okuldan Geliyor"], key=f"frm_gelis_{st.session_state.reset_sayaci}")
@@ -206,7 +207,7 @@ elif menu == "İşletme Bilgileri":
                     with c1:
                         if st.form_submit_button("📝 Güncelle"):
                             cursor = conn.cursor()
-                            cursor.execute("UPDATE isletmeler SET isletme_adi=%s, isletme_adresi=%s, yetkisi_kisi=%s, yetkili_telefon=%s, yetkili_unvani=%s, yetkili_mail=%s, ozel_talepler=%s WHERE isletme_id=%s", (y_i_ad, y_i_adr, y_i_kisi, y_i_tel, y_i_unv, y_i_mail, y_i_not, int(i_id)))
+                            cursor.execute("UPDATE isletmeler SET isletme_adi=%s, isletme_adresi=%s, yetkili_kisi=%s, yetkili_telefon=%s, yetkili_unvani=%s, yetkili_mail=%s, ozel_talepler=%s WHERE isletme_id=%s", (y_i_ad, y_i_adr, y_i_kisi, y_i_tel, y_i_unv, y_i_mail, y_i_not, int(i_id)))
                             conn.commit(); cursor.close(); verileri_getir.clear()
                             st.session_state.reset_sayaci += 1
                             st.success("İşletme güncellendi!"); st.rerun()
