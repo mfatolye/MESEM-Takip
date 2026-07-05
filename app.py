@@ -88,7 +88,7 @@ if menu == "Genel Durum Paneli":
             st.success(f"**{alan}:** Toplam {net_acik} açık net kontenjan var.")
 
     st.markdown("---")
-    st.subheader("📁 Alan İstatistikleri (Güncel Atanan İşletme Detaylı)")
+    st.subheader("🔍 Alan İstatistikleri (Güncel Atanan İşletme Detaylı)")
     for alan in alanlar:
         with st.expander(f"📘 {alan} Havuzu Detay Listesi"):
             sorgu_alan = f'''
@@ -102,7 +102,7 @@ if menu == "Genel Durum Paneli":
 elif menu == "Öğrenci Bilgileri":
     st.header("👨‍🎓 Öğrenci İşlemleri Merkezi")
     conn = get_connection()
-    sekme_listele, sekme_ekle = st.tabs(["📋 Öğrenci Havuzu & Yönetimi", "🏢 Yeni Öğrenci Ekle"])
+    sekme_listele, sekme_ekle = st.tabs(["📋 Öğrenci Havuzu & Yönetimi", "➕ Yeni Öğrenci Ekle"])
     
     with sekme_ekle:
         gelis_sekli = st.radio("Öğrencinin Geldiği Yer", ["Kendi Okulumuzdan (TOKİ Yahya Kemal MTAL)", "Başka Okuldan Geliyor"], key=f"frm_gelis_{st.session_state.reset_sayaci}")
@@ -150,12 +150,16 @@ elif menu == "Öğrenci Bilgileri":
                 with st.form("o_duz_form"):
                     y_ad = st.text_input("Adı Soyadı", o_veri['ad_soyad'])
                     y_obp = st.number_input("OBP", value=float(o_veri['obp']) if pd.notnull(o_veri['obp']) else 50.0)
+                    col_tel_o1, col_tel_o2, col_tel_o3 = st.columns(3)
+                    with col_tel_o1: y_o_tel = st.text_input("Öğrenci Tel", o_veri['ogrenci_telefon'] or "")
+                    with col_tel_o2: y_o_anne = st.text_input("Anne Tel", o_veri['anne_telefon'] or "")
+                    with col_tel_o3: y_o_baba = st.text_input("Baba Tel", o_veri['baba_telefon'] or "")
                     y_durum = st.selectbox("Durumu", ["Beklemede", "Görüşmeye Gönderildi", "Sözleşme İmzalandı (Yerleşti)"], index=["Beklemede", "Görüşmeye Gönderildi", "Sözleşme İmzalandı (Yerleşti)"].index(o_veri['mevcut_durum']))
                     c1, c2 = st.columns(2)
                     with c1:
                         if st.form_submit_button("📝 Güncelle"):
                             cursor = conn.cursor()
-                            cursor.execute("UPDATE ogrenciler SET ad_soyad=%s, obp=%s, mevcut_durum=%s WHERE ogrenci_id=%s", (y_ad, y_obp, y_durum, int(o_id)))
+                            cursor.execute("UPDATE ogrenciler SET ad_soyad=%s, obp=%s, ogrenci_telefon=%s, anne_telefon=%s, baba_telefon=%s, mevcut_durum=%s WHERE ogrenci_id=%s", (y_ad, y_obp, y_o_tel, y_o_anne, y_o_baba, y_durum, int(o_id)))
                             conn.commit(); cursor.close(); verileri_getir.clear()
                             st.session_state.reset_sayaci += 1
                             st.success("Güncellendi!"); st.rerun()
@@ -175,7 +179,7 @@ elif menu == "İşletme Bilgileri":
     sekme_i_listele, sekme_i_ekle = st.tabs(["📋 İşletme Havuzu & Yönetimi", "🏢 Yeni İşletme Ekle"])
     
     with sekme_i_listele:
-        st.dataframe(verileri_getir('SELECT isletme_id AS "ID", isletme_adi AS "İşletme Adı", yetkili_kisi AS "Yetkili", isletme_adresi AS "Adres" FROM isletmeler WHERE silindi=0 ORDER BY isletme_id DESC'), width='stretch', hide_index=True)
+        st.dataframe(verileri_getir('SELECT isletme_id AS "ID", isletme_adi AS "İşletme Adı", yetkili_kisi AS "Yetkili", isletme_telefon AS "Telefon" FROM isletmeler WHERE silindi=0 ORDER BY isletme_id DESC'), width='stretch', hide_index=True)
         st.markdown("---")
         df_i_list = verileri_getir("SELECT isletme_id, isletme_adi FROM isletmeler WHERE silindi=0 ORDER BY isletme_adi ASC")
         if not df_i_list.empty:
@@ -187,11 +191,22 @@ elif menu == "İşletme Bilgileri":
                 with st.form("i_duzenleme_formu"):
                     y_i_ad = st.text_input("İşletme Adı", i_veri['isletme_adi'])
                     y_i_adr = st.text_area("İşletme Çalışma Adresi", i_veri['isletme_adresi'] or "")
+                    
+                    st.markdown("#### Yetkili Bilgileri")
+                    c_y1, c_y2 = st.columns(2)
+                    with c_y1:
+                        y_i_kisi = st.text_input("Yetkili Adı Soyadı", i_veri['yetkili_kisi'] or "")
+                        y_i_tel = st.text_input("Yetkili Telefonu", i_veri['yetkili_telefon'] or "")
+                    with c_y2:
+                        y_i_unv = st.text_input("Yetkili Görevi", i_veri['yetkili_unvani'] or "")
+                        y_i_mail = st.text_input("Yetkili Mail", i_veri['yetkili_mail'] or "")
+                    y_i_not = st.text_area("Özel Talepler / İstekler", i_veri['ozel_talepler'] or "")
+                    
                     c1, c2 = st.columns(2)
                     with c1:
                         if st.form_submit_button("📝 Güncelle"):
                             cursor = conn.cursor()
-                            cursor.execute("UPDATE isletmeler SET isletme_adi=%s, isletme_adresi=%s WHERE isletme_id=%s", (y_i_ad, y_i_adr, int(i_id)))
+                            cursor.execute("UPDATE isletmeler SET isletme_adi=%s, isletme_adresi=%s, yetkisi_kisi=%s, yetkili_telefon=%s, yetkili_unvani=%s, yetkili_mail=%s, ozel_talepler=%s WHERE isletme_id=%s", (y_i_ad, y_i_adr, y_i_kisi, y_i_tel, y_i_unv, y_i_mail, y_i_not, int(i_id)))
                             conn.commit(); cursor.close(); verileri_getir.clear()
                             st.session_state.reset_sayaci += 1
                             st.success("İşletme güncellendi!"); st.rerun()
@@ -209,6 +224,19 @@ elif menu == "İşletme Bilgileri":
         isletme_adi = st.text_input("İşletme Adı", key=f"i_adi_{st.session_state.reset_sayaci}")
         isletme_adresi = st.text_area("İşletme Çalışma Adresi", key=f"i_adr_{st.session_state.reset_sayaci}")
         isletme_telefon = st.text_input("İşletme Sabit Tel", key=f"i_tel_{st.session_state.reset_sayaci}")
+        
+        st.markdown("### 🧑‍💼 Yetkili ve İletişim Bilgileri")
+        c_e1, c_e2 = st.columns(2)
+        with c_e1:
+            yetkili_kisi = st.text_input("İrtibat Kişisi (Yetkili Adı)", key=f"i_ykisi_{st.session_state.reset_sayaci}")
+            yetkili_telefon = st.text_input("Yetkili İletişim Numarası", key=f"i_ytel_{st.session_state.reset_sayaci}")
+        with c_e2:
+            yetkili_unvani = st.text_input("Yetkilinin Görevi", key=f"i_yunv_{st.session_state.reset_sayaci}")
+            yetkili_mail = st.text_input("Yetkili Mail", key=f"i_ymail_{st.session_state.reset_sayaci}")
+            
+        ozel_talepler = st.text_area("İşletmenin Özel İstekleri (Örn: Sadece 12. sınıf erkek öğrenci vs.)", key=f"i_not_{st.session_state.reset_sayaci}")
+        
+        st.markdown("### 📊 Kontenjan Talebi")
         col_m, col_b = st.columns(2)
         with col_m: k_muh = st.number_input("Muhasebe Kontenjanı", min_value=0, key=f"i_muh_{st.session_state.reset_sayaci}")
         with col_b: k_bur = st.number_input("Büro Kontenjanı", min_value=0, key=f"i_bur_{st.session_state.reset_sayaci}")
@@ -216,7 +244,7 @@ elif menu == "İşletme Bilgileri":
         if st.button("🏢 İşletmeyi Ekle"):
             if isletme_adi:
                 cursor = conn.cursor()
-                cursor.execute("INSERT INTO isletmeler (isletme_adi, isletme_adresi, isletme_telefon, silindi, senkronize_edildi) VALUES (%s, %s, %s, 0, 1) RETURNING isletme_id", (isletme_adi, isletme_adresi, isletme_telefon))
+                cursor.execute("INSERT INTO isletmeler (isletme_adi, isletme_adresi, isletme_telefon, yetkili_kisi, yetkili_telefon, yetkili_unvani, yetkili_mail, ozel_talepler, silindi, senkronize_edildi) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, 1) RETURNING isletme_id", (isletme_adi, isletme_adresi, isletme_telefon, yetkili_kisi, yetkili_telefon, yetkili_unvani, yetkili_mail, ozel_talepler))
                 isletme_id = cursor.fetchone()[0]
                 if k_muh > 0: cursor.execute("INSERT INTO isletme_talepleri (isletme_id, talep_edilen_alan, kontenjan, silindi, senkronize_edildi) VALUES (%s, 'Muhasebe ve Finansman', %s, 0, 1)", (isletme_id, k_muh))
                 if k_bur > 0: cursor.execute("INSERT INTO isletme_talepleri (isletme_id, talep_edilen_alan, kontenjan, silindi, senkronize_edildi) VALUES (%s, 'Büro Yönetimi', %s, 0, 1)", (isletme_id, k_bur))
