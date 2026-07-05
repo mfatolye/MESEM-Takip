@@ -93,7 +93,7 @@ if menu == "Genel Durum Paneli":
         with st.expander(f"📘 {alan} Havuzu Detay Listesi"):
             sorgu_alan = f'''
                 SELECT 
-                    o.ad_soyad AS "Ad Soyad", o.obp AS "OBP", o.cinsiyet AS "Cinsiyet", o.mesem_sinifi AS "Sınıf", o.mevrev_durum AS "Durum",
+                    o.ad_soyad AS "Ad Soyad", o.obp AS "OBP", o.cinsiyet AS "Cinsiyet", o.mesem_sinifi AS "Sınıf", o.mevcut_durum AS "Durum",
                     COALESCE((SELECT i.isletme_adi FROM eslesmeler e JOIN isletmeler i ON e.isletme_id = i.isletme_id WHERE e.ogrenci_id = o.ogrenci_id AND e.silindi=0 ORDER BY e.islem_id DESC LIMIT 1), 'Atanmadı') AS "Yönlendirildiği İşletme"
                 FROM ogrenciler o WHERE o.alan_dal = '{alan}' AND o.silindi = 0
             '''
