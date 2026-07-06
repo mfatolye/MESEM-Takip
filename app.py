@@ -1,4 +1,4 @@
-import streamlit st
+import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 import psycopg2
@@ -98,7 +98,7 @@ if menu == "Genel Durum Paneli":
                     COALESCE((SELECT i.isletme_adi FROM eslesmeler e JOIN isletmeler i ON e.isletme_id = i.isletme_id WHERE e.ogrenci_id = o.ogrenci_id AND e.silindi=0 ORDER BY e.islem_id DESC LIMIT 1), 'Atanmadı') AS "Yönlendirildiği İşletme"
                 FROM ogrenciler o WHERE o.alan_dal = '{alan}' AND o.silindi = 0
             '''
-            st.dataframe(verileri_getir(sorgu_alan), width='stretch', hide_index=True)
+            st.dataframe(verileri_getir(sorgu_alan), use_container_width=True, hide_index=True)
 
 elif menu == "Öğrenci Bilgileri":
     st.header("👨‍🎓 Öğrenci İşlemleri Merkezi")
@@ -139,7 +139,7 @@ elif menu == "Öğrenci Bilgileri":
                 st.rerun()
 
     with sekme_listele:
-        st.dataframe(verileri_getir('SELECT ogrenci_id AS "ID", ad_soyad AS "Ad Soyad", obp AS "OBP", alan_dal AS "Alan", mevcut_durum AS "Durum" FROM ogrenciler WHERE silindi=0 ORDER BY ogrenci_id DESC'), width='stretch', hide_index=True)
+        st.dataframe(verileri_getir('SELECT ogrenci_id AS "ID", ad_soyad AS "Ad Soyad", obp AS "OBP", alan_dal AS "Alan", mevcut_durum AS "Durum" FROM ogrenciler WHERE silindi=0 ORDER BY ogrenci_id DESC'), use_container_width=True, hide_index=True)
         st.markdown("---")
         df_o_list = verileri_getir("SELECT ogrenci_id, ad_soyad FROM ogrenciler WHERE silindi=0 ORDER BY ad_soyad ASC")
         if not df_o_list.empty:
@@ -180,7 +180,7 @@ elif menu == "İşletme Bilgileri":
     sekme_i_listele, sekme_i_ekle = st.tabs(["📋 İşletme Havuzu & Yönetimi", "🏢 Yeni İşletme Ekle"])
     
     with sekme_i_listele:
-        st.dataframe(verileri_getir('SELECT isletme_id AS "ID", isletme_adi AS "İşletme Adı", yetkili_kisi AS "Yetkili", isletme_telefon AS "Telefon" FROM isletmeler WHERE silindi=0 ORDER BY isletme_id DESC'), width='stretch', hide_index=True)
+        st.dataframe(verileri_getir('SELECT isletme_id AS "ID", isletme_adi AS "İşletme Adı", yetkili_kisi AS "Yetkili", isletme_telefon AS "Telefon" FROM isletmeler WHERE silindi=0 ORDER BY isletme_id DESC'), use_container_width=True, hide_index=True)
         st.markdown("---")
         df_i_list = verileri_getir("SELECT isletme_id, isletme_adi FROM isletmeler WHERE silindi=0 ORDER BY isletme_adi ASC")
         if not df_i_list.empty:
@@ -302,7 +302,7 @@ elif menu == "Eşleştirme ve Süreç Takibi":
     df_eslesmeler = verileri_getir("SELECT e.islem_id, o.ad_soyad AS ogrenci, i.isletme_adi AS isletme, e.surec_durumu, e.ogrenci_id FROM eslesmeler e JOIN ogrenciler o ON e.ogrenci_id = o.ogrenci_id JOIN isletmeler i ON e.isletme_id = i.isletme_id WHERE e.silindi=0 ORDER BY e.islem_id DESC")
     
     if not df_eslesmeler.empty:
-        st.dataframe(df_eslesmeler[['islem_id', 'ogrenci', 'isletme', 'surec_durumu']].rename(columns={'islem_id': 'No', 'ogrenci': 'Öğrenci', 'isletme': 'İşletme', 'surec_durumu': 'Durum'}), width='stretch', hide_index=True)
+        st.dataframe(df_eslesmeler[['islem_id', 'ogrenci', 'isletme', 'surec_durumu']].rename(columns={'islem_id': 'No', 'ogrenci': 'Öğrenci', 'isletme': 'İşletme', 'surec_durumu': 'Durum'}), use_container_width=True, hide_index=True)
         st.markdown("---")
         secenekler_e = ["Lütfen Seçiniz..."] + [f"{row['islem_id']} - {row['ogrenci']} ({row['isletme']})" for _, row in df_eslesmeler.iterrows()]
         e_secim = st.selectbox("İncelemek veya Silmek İstediğiniz Kayıt:", secenekler_e, key=f"guncelle_e_secim_{st.session_state.reset_sayaci}")
